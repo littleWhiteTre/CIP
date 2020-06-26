@@ -1,15 +1,38 @@
 import numpy as np
 from itertools import chain
-import os
-import sys
-sys.path.append(os.getcwd())
-from utils.functions import read_data
-from utils.config import Config
 
+
+def read_data(file):
+    '''
+    return data:
+    [[('戴相龙', 'NR'), ('说', 'VV'),……]]
+    '''
+    data = []
+    with open(file, 'r', encoding='utf-8') as f:
+        line = f.readline()
+        sentence = []
+        while line:
+            if line == '\n':
+                line = f.readline()
+                data.append(sentence)
+                sentence = []
+            else:
+                line = line.replace('\n', '')
+                vals = line.split()
+                word = vals[1]
+                part = vals[3]
+                sentence.append((word, part))
+                line = f.readline()
+    return data
+
+class Config:
+    def __init__(self):
+        self.train_file = './data/train.conll'
+        self.dev_file = './data/dev.conll'
+        self.alpha = 0.3
 
 def evalution(dev_data, model):
     precision = 0.
-    recall = 0.
     for sent in dev_data:
         words_list = [i[0] for i in sent]
         labels_list = [i[1] for i in sent]
@@ -19,13 +42,9 @@ def evalution(dev_data, model):
             if label == labels_list[j]:
                 right_labels.append(label)
         sent_precision = len(right_labels) / len(predict_labels)
-        sent_recall = len(right_labels) / len(labels_list)
         precision = precision + sent_precision
-        recall = recall + sent_recall
     precision = precision / len(dev_data)
-    recall = recall / len(dev_data)
-    f1 = (2 * precision * recall) / (precision + recall)
-    return precision, recall, f1
+    return precision
 
 class HMM:
     def __init__(self, data):
@@ -140,4 +159,4 @@ if __name__ == "__main__":
     precision, recall, f1 = evalution(dev_data, hmm)
     print('%s:%f, %s:%f, %s:%f' %
           ('precision', precision, 'recall', recall, 'f1', f1))
-    # precision:0.693919, recall:0.693919, f1:0.693919
+    # precision:0.693919
