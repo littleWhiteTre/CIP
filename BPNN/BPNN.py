@@ -56,7 +56,6 @@ class BPNN:
         return inp
 
 
-
 if __name__ == "__main__":
     x = np.random.randn(N, D_in)
     y = np.array(range(0, 10))
