@@ -1,7 +1,8 @@
 import numpy as np
 from itertools import chain
 import os
-
+from tqdm import tqdm
+import pickle
 
 def read_data(file):
     '''
@@ -26,16 +27,34 @@ def read_data(file):
                 line = f.readline()
     return data
 
+def evalution(dev_data, model):
+    precision = 0.
+    print('evaluting model.')
+    for sent in tqdm(dev_data):
+        words_list = [i[0] for i in sent]
+        labels_list = [i[1] for i in sent]
+        predict_labels = model.predict(words_list)
+        right_labels = []
+        for j, label in enumerate(predict_labels):
+            if label == labels_list[j]:
+                right_labels.append(label)
+        sent_precision = len(right_labels) / len(predict_labels)
+        precision = precision + sent_precision
+    precision = precision / len(dev_data)
+    return precision
 
 class Config:
     def __init__(self):
-        work_path = os.getcwd().split('\\')
+        self.cwd = os.getcwd()
+        work_path = self.cwd.split('\\')
         if work_path[-1] != 'CIP':
             self.train_file = '../data/train.conll'
             self.dev_file = '../data/dev.conll'
-        else:    
+            self.data_path = '../data/'
+        else:
             self.train_file = './data/train.conll'
             self.dev_file = './data/dev.conll'
+            self.data_path = './data/'
         self.alpha = 0.3
 
 
@@ -45,7 +64,7 @@ class Linear_model:
         self.feats = self._extract_feats()
         self.feats2idx = {feat: idx for idx, feat in enumerate(self.feats)}
         self.w = np.random.rand(len(self.feats))
-        # self._build_dicts()
+        self._build_dicts()
         # self.words    self.tags   self.chars
         # self.words2idx    self.tags2idx   self.chars2idx
         # self.idx2tags
@@ -98,9 +117,24 @@ class Linear_model:
     def _sent2feats(self, sent, tags):
         return [self._word2feats(sent, i, tags[i]) for i in range(len(sent))]
         
+    def _feats2vec(self, feats):
+        feats_vec = np.zeros(len(self.feats), dtype=np.int)
+        for feat in feats:
+            if feat in self.feats:
+                feats_vec[self.feats2idx[feat]] = 1
+        return feats_vec
+
     def train(self):
-        pass
-                
+        for item in tqdm(self.data):
+            sent, tags = zip(*item)
+            for i in range(len(tags)):
+                word = sent[i]
+                tag = tags[i]
+                pred_tag = self.predict_word(sent, i)
+                if pred_tag != tag:
+                    feats_y = self._feats2vec(self._word2feats(sent, i, tag))
+                    feats_pred = self._feats2vec(self._word2feats(sent, i ,pred_tag))
+                    self.w = self.w + feats_y - feats_pred
 
     def predict(self, word_list):
         best_tags = []    
@@ -113,17 +147,30 @@ class Linear_model:
         vals = []
         for tag in self.tags:
             word_feats = self._word2feats(word_list, i, tag)
-            feats_vec = np.zeros(len(self.feats), dtype=np.int)
-            for feat in word_feats:
-                if feat in self.feats:
-                    feats_vec[self.feats2idx[feat]] = 1
+            feats_vec = self._feats2vec(word_feats)
             score = self.w.dot(feats_vec)
             vals.append(score)
         return self.tags[np.argmax(vals)]
 
+    def save_model(self, path):
+        np.save(path+'weights', self.w)
+        with open(path+'feats.pkl', 'wb') as f:
+            pickle.dump(self.feats, f)
+
+    def load_model(self, path):
+        self.w = np.load(path+'weights.npy')
+        with open(path+'feats.pkl', 'rb') as f:
+            self.feats = pickle.load(f)
+
+
 if __name__ == "__main__":
     cfg = Config()
     data = read_data(cfg.train_file)
+    dev_data = read_data(cfg.dev_file)
     model = Linear_model(data)
-    word_list, tags = zip(*data[0])
-    print(model.predict(word_list))
+    model.load_model(cfg.data_path)
+    precision = evalution(dev_data, model)
+    print('precision:', precision)
+    #precision： 0.698
+    # model.train()
+    # model.save_model(cfg.data_path)
