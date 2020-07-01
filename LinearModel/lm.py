@@ -77,8 +77,8 @@ class Linear_model:
             for idx, feat in enumerate(self.partical_feats)
         }
         self.w = np.random.rand(len(self.feats))
-        self.w_partial = np.random.rand(
-            len(self.partical_feats) * len(self.tags))
+        self.w_partial = np.random.rand(len(self.tags),
+                                        len(self.partical_feats))
 
     def _build_dicts(self):
         words, tags = zip(*(chain(*self.data)))
@@ -183,21 +183,12 @@ class Linear_model:
                 if pred_tag != tag:
                     if self.use_partial:
                         feats = self._feats2vec(
-                            self._word2partial_feats(sent, i), self.use_partial)
-                        y_offset = self.tags2idx[tag] * len(
-                            self.partical_feats)
-                        pred_offset = self.tags2idx[pred_tag] * len(
-                            self.partical_feats)
-                        self.w_partial[
-                            y_offset: y_offset +
-                            len(self.partical_feats)] = self.w_partial[
-                                y_offset:
-                                y_offset + len(self.partical_feats)] + feats
-                        self.w_partial[
-                            pred_offset: pred_offset +
-                            len(self.partical_feats)] = self.w_partial[
-                                pred_offset:
-                                pred_offset + len(self.partical_feats)] - feats
+                            self._word2partial_feats(sent, i),
+                            self.use_partial)
+                        y_offset = self.tags2idx[tag]
+                        pred_offset = self.tags2idx[pred_tag]
+                        self.w_partial[y_offset] = self.w_partial[y_offset] + feats
+                        self.w_partial[pred_offset] = self.w_partial[pred_offset] - feats
                     else:
                         feats_y = self._feats2vec(
                             self._word2feats(sent, i, tag))
@@ -217,10 +208,9 @@ class Linear_model:
         for tag in self.tags:
             if use_partial:
                 word_feats = self._word2partial_feats(word_list, i)
-                offset = self.tags2idx[tag] * len(self.partical_feats)
+                offset = self.tags2idx[tag]
                 feats_vec = self._feats2vec(word_feats, use_partial)
-                score = self.w_partial[offset:offset +
-                                       len(self.partical_feats)].dot(feats_vec)
+                score = self.w_partial[offset].dot(feats_vec)
                 vals.append(score)
             else:
                 word_feats = self._word2feats(word_list, i, tag)
@@ -256,10 +246,14 @@ if __name__ == "__main__":
     data = read_data(cfg.train_file)
     dev_data = read_data(cfg.dev_file)
     model = Linear_model(data, use_partial=True)
+    model.load_model(cfg.data_path)
+    # evalution(dev_data, model)
     sent, tags = zip(*data[0])
+    print(tags)
+    print(model.predict(sent))
     # model.load_model(cfg.data_path)
     # precision = evalution(dev_data, model)
     # print('precision:', precision)
     #precision： 0.698
-    model.train()
-    model.save_model(cfg.data_path)
+    # model.train()
+    # model.save_model(cfg.data_path)
