@@ -28,6 +28,7 @@ def read_data(file):
                 line = f.readline()
     return data
 
+
 def evalution(dev_data, model):
     precision = 0.
     print('evaluting model.')
@@ -42,6 +43,7 @@ def evalution(dev_data, model):
         sent_precision = len(right_labels) / len(predict_labels)
         precision = precision + sent_precision
     precision = precision / len(dev_data)
+    print('precision:', precision)
     return precision
 
 
@@ -57,7 +59,6 @@ class Config:
             self.train_file = './data/train.conll'
             self.dev_file = './data/dev.conll'
             self.data_path = './data/'
-        self.alpha = 0.3
 
 
 class Log_lm:
@@ -68,6 +69,8 @@ class Log_lm:
         self.feats2idx = {feat: idx for idx, feat in enumerate(self.feats)}
         self.w = np.zeros(len(self.feats))
         self.g = np.zeros(len(self.feats))
+        self.C = 0.01  # 正则项系数
+        self.init_eta = 0.0125  # w的学习率初始值
 
     def _build_dicts(self):
         words, tags = zip(*(chain(*self.data)))
@@ -123,7 +126,7 @@ class Log_lm:
             if feat in self.feats:
                 feats_vec[self.feats2idx[feat]] = 1
         return feats_vec
-        
+
     def _caculate_probs(self, sent, i):
         probs = np.zeros(len(self.tags))
         for j, tag in enumerate(self.tags):
@@ -131,19 +134,24 @@ class Log_lm:
             probs[j] = np.exp(self.w.dot(feats_vec))
         return probs
 
-    def train(self, epochs=1, batch_size=50):
+    def train(self, epochs=1, batch_size=50, regularization=False):
         b = 0
         for epoch in range(epochs):
             for item in tqdm(self.data):
                 sent, tags = zip(*item)
                 for i, word in enumerate(sent):
-                    feats_y = self._feats2vec(self._word2feats(sent, i, tags[i]))
+                    feats_y = self._feats2vec(
+                        self._word2feats(sent, i, tags[i]))
                     probs = self._caculate_probs(sent, i)
                     for tag in self.tags:
-                        feats_y_ = self._feats2vec(self._word2feats(sent, i, tag))
+                        feats_y_ = self._feats2vec(
+                            self._word2feats(sent, i, tag))
                         prob_y_ = probs[self.tags2idx[tag]] / np.sum(probs)
                         feats_y = feats_y - prob_y_ * feats_y_
-                    self.g = self.g + feats_y
+                    if regularization:
+                        self.g = self.g + feats_y - self.C * self.w
+                    else:
+                        self.g = self.g + feats_y
                     b = b + 1
                     if b == batch_size:
                         self.w = self.w + self.g
@@ -168,7 +176,7 @@ class Log_lm:
         np.save(path + 'log_lm_weights', self.w)
         with open(path + 'feats.pkl', 'wb') as f:
             pickle.dump(self.feats, f)
-        
+
     def load_model(self, path):
         self.w = np.load(path + 'log_lm_weights.npy')
         with open(path + 'feats.pkl', 'rb') as f:
@@ -181,8 +189,9 @@ if __name__ == "__main__":
     data = read_data(cfg.train_file)
     dev_data = read_data(cfg.dev_file)
     model = Log_lm(data)
-    model.train()
-    model.save_model(cfg.data_path)
-    # sent, tags = zip(*data[0])
-    # print(tags)
-    # print(model.predict(sent))
+    # model.train()
+    # model.save_model(cfg.data_path)
+    model.load_model(cfg.data_path)
+    sent, tags = zip(*dev_data[0])
+    print(tags)
+    print(model.predict(sent))
