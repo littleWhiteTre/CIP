@@ -112,73 +112,84 @@ class CRF:
             feat6 = '06=' + cur_tag + sent[i] + sent[i + 1][0]
         return [feat1, feat2, feat3, feat4, feat5, feat6]
 
-    def _feats2vec(self, feats):
-        feats_vec = np.zeros(len(self.feats), dtype=np.int)
-        for i in feats:
-            if i in self.feats:
-                feats_vec[self.feats2idx[i]] += 1
-        return feats_vec
+    # def _feats2vec(self, feats):
+    #     feats_vec = np.zeros(len(self.feats), dtype=np.int)
+    #     for i in feats:
+    #         if i in self.feats:
+    #             feats_vec[self.feats2idx[i]] += 1
+    #     return feats_vec
 
     def _score_sentence(self, sent, tags):
         # 给定一个句子和一个标注序列，计算score
         sent_feats = self._sent2feats(sent, tags)
-        sent_feats_vec = [self._feats2vec(i) for i in sent_feats]
-        score = [self.w.dot(i) for i in sent_feats_vec]
-        return np.sum(score)
+        score = 0.
+        for i, wf in enumerate(sent_feats):
+            idxs = [self.feats2idx[j] for j in wf if j in self.feats]
+            score = score + self.w[idxs].sum()
+        return score
 
-    def _forward_alg(self, sent, k, t):
+    def _forward_alg(self, sent):
         scores = np.zeros([len(sent), len(self.tags)])
         for tag in self.tags:
             feats_0 = self._word2feats(sent, 0, tag, '<bos>')
-            feats_0 = self.w.dot(self._feats2vec(feats_0))
-            scores[0, self.tags2idx[tag]] = np.exp(feats_0)
-        if k == 0:
-            return scores[0, self.tags2idx[t]]
+            score = self.w[[
+                self.feats2idx[j] for j in feats_0 if j in self.feats
+            ]].sum()
+            scores[0, self.tags2idx[tag]] = np.exp(score)
         for state in range(1, len(sent)):
             for cur_tag in self.tags:
                 for pre_tag in self.tags:
                     feats_i = self._word2feats(sent, state, pre_tag, cur_tag)
-                    feats_i = self.w.dot(self._feats2vec(feats_i))
+                    score = self.w[[
+                        self.feats2idx[j] for j in feats_i if j in self.feats
+                    ]].sum()
                     scores[state, self.tags2idx[cur_tag]] = np.exp(
-                        feats_i) * scores[state - 1, self.tags2idx[pre_tag]]
-            if k == state:
-                return scores[k, self.tags2idx[t]]
+                        score) * scores[state - 1, self.tags2idx[pre_tag]]
+        self.forward_scores = scores
 
-    def _backward_alg(self, sent, k, t):
+    def _get_forward_score(self, k, t):
+        return self.forward_scores[k, self.tags2idx[t]]
+
+    def _backward_alg(self, sent):
         scores = np.zeros([len(sent), len(self.tags)])
         for tag in self.tags:
             for pre_tag in self.tags:
                 feats_end = self._word2feats(sent, len(sent) - 1, tag, pre_tag)
-                feats_end = self.w.dot(self._feats2vec(feats_end))
-                scores[-1, self.tags2idx[tag]] = np.exp(feats_end)
-        if k == len(sent) - 1:
-            return scores[-1, self.tags2idx[t]]
+                score = self.w[[
+                    self.feats2idx[j] for j in feats_end if j in self.feats
+                ]].sum()
+                scores[-1, self.tags2idx[tag]] = np.exp(score)
         for state in range(len(sent) - 2, -1, -1):
             for cur_tag in self.tags:
                 for pre_tag in self.tags:
                     feats_i = self._word2feats(sent, state, cur_tag, pre_tag)
-                    feats_i = self.w.dot(self._feats2vec(feats_i))
-                    scores[state, self.tags2idx[t]] = np.exp(feats_i) * scores[
-                        state + 1, self.tags2idx[pre_tag]]
-            if k == state:
-                return scores[k, self.tags2idx[t]]
+                    score = self.w[[
+                        self.feats2idx[j] for j in feats_i if j in self.feats
+                    ]].sum()
+                    scores[state, self.tags2idx[cur_tag]] = np.exp(
+                        score) * scores[state + 1, self.tags2idx[pre_tag]]
+        self.backward_scores = scores
+
+    def _get_backward_score(self, k, t):
+        return self.backward_scores[k, self.tags2idx[t]]
 
     def _viterbi_decode(self, words_list):
         max_p = np.zeros([len(words_list), len(self.tags)])
         path = np.zeros([len(words_list), len(self.tags)], dtype=np.int)
         for i, t in enumerate(self.tags):
             feats_0 = self._word2feats(words_list, 0, t, '<bos>')
-            feats_0 = self._feats2vec(feats_0)
-            score = self.w.dot(feats_0)
+            score = self.w[[
+                self.feats2idx[j] for j in feats_0 if j in self.feats
+            ]].sum()
             max_p[0, self.tags2idx[t]] = score
         for i in range(1, len(words_list)):
             for cur_tag in self.tags:
                 vals = []
                 for pre_tag in self.tags:
                     feats_i = self._word2feats(words_list, i, cur_tag, pre_tag)
-                    feats_i = self._feats2vec(feats_i)
-                    score = self.w.dot(feats_i) + max_p[i - 1,
-                                                        self.tags2idx[pre_tag]]
+                    score = self.w[[
+                        self.feats2idx[j] for j in feats_i if j in self.feats
+                    ]].sum()
                     vals.append(score)
                 max_p[i, self.tags2idx[cur_tag]] = np.max(vals)
                 path[i, self.tags2idx[cur_tag]] = np.argmax(vals)
@@ -193,54 +204,47 @@ class CRF:
         best_seq = [self.idx2tags[i] for i in best_seq]
         return best_seq
 
-    def train(self, epochs=1):
-        for epoch in range(epochs):
-            for item in tqdm(self.data):
-                sent, tags = zip(*item)
-                # pred_tags = self._viterbi_decode(sent)
-                sent_feats = [
-                    self._feats2vec(i) for i in self._sent2feats(sent, tags)
-                ]
-                # f(S, Y)
-                sent_feats = np.sum(sent_feats, axis=0)
-                z_s = [
-                    self._forward_alg(sent,
-                                      len(sent) - 1, t) for t in self.tags
-                ]
-                z_s = np.sum(z_s)
-                vec_1 = np.zeros(len(self.feats))
-                for i, w in enumerate(sent):
-                    if i == 0:
-                        for t in self.tags:
-                            word_feats = self._word2feats(sent, 0, t, '<bos>')
-                            word_feats = self._feats2vec(word_feats)
-                            alpha = self._forward_alg(sent, i, t)
-                            beta = self._backward_alg(sent, i, t)
-                            exp_score = np.exp(
-                                self.w.dot(
-                                    self._feats2vec(
-                                        self._word2feats(sent, i, t,
-                                                         '<bos>'))))
+    def train(self):
+        for item in tqdm(self.data):
+            sent, tags = zip(*item)
+            # pred_tags = self._viterbi_decode(sent)
+            # f(S, Y)
+            feats_S_Y = np.zeros(len(self.feats))
+            sent_feats = self._sent2feats(sent, tags)
+            for word_feats in sent_feats:
+                for feat in word_feats:
+                    if feat in self.feats:
+                        feats_S_Y[self.feats2idx[feat]] += 1.
+            
+            # sent_feats = np.sum(sent_feats, axis=0)
+            self._forward_alg(sent)
+            self._backward_alg(sent)
+            z_s = self.forward_scores[-1].sum()
+            vec_1 = np.zeros(len(self.feats))
+            for i, w in enumerate(sent):
+                if i == 0:
+                    for t in self.tags:
+                        word_feats = self._word2feats(sent, 0, t, '<bos>')
+                        alpha = self._get_forward_score(i, t)
+                        beta = self._get_backward_score(i, t)
+                        idx = [self.feats2idx[j] for j in word_feats if j in self.feats]
+                        score = self.w[idx].sum()
+                        exp_score = np.exp(score)
+                        p = (alpha * beta * exp_score) / z_s
+                        vec_1 += word_feats * p
+                else:
+                    for t in self.tags:
+                        for pre_tag in self.tags:
+                            word_feats = self._word2feats(sent, 0, t, pre_tag)
+                            alpha = self._get_forward_score(i - 1, pre_tag)
+                            beta = self._get_backward_score(i, t)
+                            idx = [self.feats2idx[j] for j in word_feats if j in self.feats]
+                            score = self.w[idx].sum()
+                            exp_score = np.exp(score)
                             p = (alpha * beta * exp_score) / z_s
                             vec_1 += word_feats * p
-                    else:
-                        for t in self.tags:
-                            for pre_tag in self.tags:
-                                word_feats = self._word2feats(
-                                    sent, 0, t, pre_tag)
-                                word_feats = self._feats2vec(word_feats)
-                                alpha = self._forward_alg(sent, i - 1, pre_tag)
-                                beta = self._backward_alg(sent, i, t)
-                                exp_score = np.exp(
-                                    self.w.dot(
-                                        self._feats2vec(
-                                            self._word2feats(
-                                                sent, i, t, pre_tag))))
-                                p = (alpha * beta * exp_score) / z_s
-                                vec_1 += word_feats * p
-                    self.g = self.g + (sent_feats - vec_1)
-            self.w = self.w + self.g
-            self.g = np.zeros(len(self.feats))
+                self.g = self.g + (sent_feats - vec_1)
+                self.w = self.w + self.g
 
     def predict(self, words_list):
         return self._viterbi_decode(words_list)

@@ -194,6 +194,20 @@ class Global_lm:
                     error_feats_vec += self._feats2vec(i)
                 self.w = self.w + crt_feats_vec - error_feats_vec
         print('training finished.')
+
+    def save_model(self, path, model_name='global_lm.model'):
+        parameters = {'w': self.w, 'feats': self.feats, 'tags': self.tags}
+        with open(path + model_name, 'wb') as f:
+            pickle.dump(parameters, f)
+
+    def load_model(self, path, model_name='global_lm.model'):
+        with open(path + model_name, 'rb') as f:
+            parameters = pickle.load(f)
+        self.w = parameters['w']
+        self.feats = parameters['feats']
+        self.feats2idx = {feat: idx for idx, feat in enumerate(self.feats)}
+        self.tags = parameters['tags']
+        self.tags2idx = {tag: idx for idx, tag in enumerate(self.tags)}
                 
 
 if __name__ == "__main__":
@@ -201,6 +215,7 @@ if __name__ == "__main__":
     data = read_data(cfg.train_file)
     model = Global_lm(data)
     model.train()
+    model.save_model(cfg.data_path)
     # sent, tags = zip(*data[0])
     # print(sent, tags)
     # print(model._sent2feats(sent, tags))
