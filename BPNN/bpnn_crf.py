@@ -79,12 +79,23 @@ class Cross_Entropy_Loss:
     def delta(z, a, y):
         return a - y
 
+class Neg_Log_Likelihood_Loss:
+
+    @staticmethod
+    def fn(sum_p, score_real):
+        return sum_p - score_real
+
+    @staticmethod
+    def delta():
+        pass
+
 
 class Network:
     def __init__(self, embedding_dim, hidden_size, word2idx, tag2idx, loss):
         # sizes: [embedding_dim, hidden_size, output_size]
         self.word2idx = word2idx
         self.tag2idx = tag2idx
+        self.idx2tag = {idx: tag for idx, tag in enumerate(self.tag2idx)}
         self.vocab_size = len(word2idx)
         self.tag_size = len(tag2idx)
         self.embedding = np.random.randn(self.vocab_size, embedding_dim)
@@ -96,6 +107,7 @@ class Network:
             np.random.randn(hidden_size, 1),
             np.random.randn(self.tag_size, 1)
         ]
+        self.transition = np.random.randn([self.tag_size, self.tag_size])
         self.loss = loss
 
     def forward(self, inp):
@@ -106,6 +118,61 @@ class Network:
             a = sigmoid(z)
         return a
 
+    def predict(self, words_list):
+        emission = np.zeros([len(words_list), len(self.tag2idx)])
+        for idx, word in enumerate(words_list):
+            if word in self.word2idx:
+                word = self.word2idx[word]
+            else:
+                word = self.word2idx['<unk>']
+            e_score = self.forward(word)
+            emission[idx] = e_score
+    
+    def _viterbi_decode(self, emission, words_list):
+        e = emission
+        t = self.transition
+        n = self.tag_size
+        obs = np.expand_dims(e[0], 0)
+        pre = obs
+        alpha1 = []
+        alpha0 = []
+        best_seq = []
+        for i in range(1, len(words_list)):
+            obs = np.expand_dims(e[i], 0)
+            pre = np.repeat(pre.T, n, 1)
+            obs = np.repeat(obs, n, 0)
+            score = pre + obs + t
+            pre = np.max(score, axis=0)
+            alpha1.append(pre)
+            alpha0.append(np.max(score, axis=0))
+        idx = np.argmax(alpha0[-1])
+        best_seq.append(idx)
+        for i in range(len(alpha0)-2, -1, -1):
+            pre = alpha1[i][idx]
+            idx = pre
+            best_seq.append(idx)
+        best_seq.reverse()
+        best_seq = [self.idx2tag[i] for i in best_seq]
+        return best_seq
+
+
+    def _forward_alg(self, emission):
+        e = emission
+        t = self.transition
+        n = self.tag_size
+        l = e.shape[0]
+        obs = np.expand_dims(e[0], 0) # [1, n]
+        pre = np.log(np.exp(obs)) # [1, n]
+        for i in range(1, l):
+            obs = np.expand_dims(e[i], 0)
+            pre = np.repeat(pre.T, n, 1)
+            obs = np.repeat(obs, n, 0)
+            score = pre + obs + t
+            pre = [np.log(np.sum(np.exp(score[j]))) for j in score.shape[0]]
+            pre = np.array([pre])
+        return np.log(np.sum(np.exp(pre)))
+            
+    
     def SGD(self,
             training_data,
             epochs,
@@ -199,6 +266,7 @@ class Network:
             'embed': self.embedding,
             'weights': self.weights,
             'bias': self.bias,
+            'transition': self.transition,
             'word2idx': self.word2idx,
             'tag2idx': self.tag2idx
         }
@@ -211,6 +279,7 @@ class Network:
             params = pickle.load(f)
         self.weights = params['weights']
         self.bias = params['bias']
+        self.transition = params['transition']
         self.embedding = params['embed']
         self.word2idx = params['word2idx']
         self.tag2idx = params['tag2idx']
