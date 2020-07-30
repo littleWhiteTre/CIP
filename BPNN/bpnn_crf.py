@@ -28,7 +28,11 @@ def read_data(file):
                 part = vals[3]
                 sentence.append((word, part))
                 line = f.readline()
-    return data
+    data_set = []
+    for i in data:
+        tags, words = zip(*i)
+        data_set.append((tags, words))
+    return data_set
 
 
 def statistic_data(data):
@@ -80,7 +84,6 @@ class Cross_Entropy_Loss:
         return a - y
 
 class Neg_Log_Likelihood_Loss:
-
     @staticmethod
     def fn(sum_p, score_real):
         return sum_p - score_real
@@ -110,23 +113,6 @@ class Network:
         self.transition = np.random.randn([self.tag_size, self.tag_size])
         self.loss = loss
 
-    def forward(self, inp):
-        # inp : one-hot number.
-        a = np.expand_dims(self.embedding[inp], 1)
-        for w, b in zip(self.weights, self.bias):
-            z = w.dot(a) + b
-            a = sigmoid(z)
-        return a
-
-    def predict(self, words_list):
-        emission = np.zeros([len(words_list), len(self.tag2idx)])
-        for idx, word in enumerate(words_list):
-            if word in self.word2idx:
-                word = self.word2idx[word]
-            else:
-                word = self.word2idx['<unk>']
-            e_score = self.forward(word)
-            emission[idx] = e_score
     
     def _viterbi_decode(self, emission, words_list):
         e = emission
@@ -173,95 +159,11 @@ class Network:
         return np.log(np.sum(np.exp(pre)))
             
     
-    def SGD(self,
-            training_data,
-            epochs,
-            minibatch_size,
-            lmbda,
-            eta,
-            data_path,
-            best_acc=0,
-            test_data=None,
-            shuffle=True):
-        best_acc = best_acc
-        for epoch in range(epochs):
-            if shuffle:
-                random.shuffle(training_data)
-            batchs = []
-            n = len(training_data)
-            running_loss = 0
-            for k in range(0, n, minibatch_size):
-                batch = training_data[k:k + minibatch_size]
-                batchs.append(batch)
-            for batch in tqdm(batchs):
-                loss = self.update_batch_data(batch, lmbda, eta, n)
-                running_loss = running_loss + loss
-            if test_data:
-                acc = self.evelution(test_data)
-                if acc > best_acc:
-                    best_acc = acc
-                    self.save_model(data_path)
-            print('%d, loss is:%f' % (epoch + 1, running_loss))
+    def forward(self, inp):
+        pass
+    
 
-    def update_batch_data(self, batch_data, lmbda, eta, N):
-        n = len(batch_data)
-        delta_w = [np.zeros(i.shape) for i in self.weights]
-        delta_b = [np.zeros(i.shape) for i in self.bias]
-        for item in batch_data:
-            word, tag = item
-            word = self.word2idx[word]
-            x = np.expand_dims(self.embedding[word], 1)
-            y = np.zeros([self.tag_size, 1])
-            y[self.tag2idx[tag]] = 1
-            nabla_delta_w, nabla_delta_b = self.backward(x, y)
-            delta_w = [dw + ndw for dw, ndw in zip(delta_w, nabla_delta_w)]
-            delta_b = [db + ndb for db, ndb in zip(delta_b, nabla_delta_b)]
-        self.weights = [(1 - eta * (lmbda / N)) * w - (eta / n) * dw
-                        for w, dw in zip(self.weights, delta_w)]
-        self.bias = [b - (eta / n) * db for b, db in zip(self.bias, delta_b)]
-        loss = self.loss.fn(self.forward(word), y)
-        return loss / n
-
-    def backward(self, x, y):
-        # feed forward.
-        activation = x
-        activations = [x]
-        z_s = []
-        for w, b in zip(self.weights, self.bias):
-            z = w.dot(activation) + b
-            z_s.append(z)
-            # if len(z_s) == 1:
-            #     activation = softmax(z)
-            # else:
-            #     activation = sigmoid(z)
-            activation = sigmoid(z)
-            activations.append(activation)
-        # back.
-        delta = self.loss.delta(z_s[-1], activation, y)
-        delta_w2 = delta.dot(
-            activations[-2].transpose())  #[output, 1] [1, hidden_size]
-        delta_b2 = delta
-        delta_ = np.dot(self.weights[-1].transpose(), delta) * sigmoid_prime(
-            z_s[0])
-        delta_w1 = delta_.dot(x.transpose())  # [] * [] --> [hidden, input]
-        delta_b1 = delta_
-        return [delta_w1, delta_w2], [delta_b1, delta_b2]
-
-    def evelution(self, test_data):
-        words, tags = zip(*test_data)
-        onehot = []
-        for w in words:
-            if w in self.word2idx:
-                onehot.append(self.word2idx[w])
-            else:
-                onehot.append(self.word2idx['<unk>'])
-        tags = [self.tag2idx[i] for i in tags]
-        pred = [np.argmax(self.forward(i)) for i in onehot]
-        result = sum(int(pred[i] == tags[i]) for i in range(len(pred)))
-        print(result, '/', len(tags))
-        return result / len(tags)
-
-    def save_model(self, data_path, model_name='bpnn.model'):
+    def save_model(self, data_path, model_name='bpnn_crf.model'):
         params = {
             'embed': self.embedding,
             'weights': self.weights,
@@ -274,7 +176,7 @@ class Network:
             pickle.dump(params, f)
         print('model has saved.')
 
-    def load_model(self, data_path, model_name='bpnn.model'):
+    def load_model(self, data_path, model_name='bpnn_crf.model'):
         with open(data_path + model_name, 'rb') as f:
             params = pickle.load(f)
         self.weights = params['weights']
@@ -293,14 +195,5 @@ if __name__ == "__main__":
     cfg = Config()
     train = read_data(cfg.train_file)
     test = read_data(cfg.dev_file)
-    train = [j for i in train for j in i]
-    test = [j for i in test for j in i]
-    words, tags = statistic_data(train)
-    word2idx = {w: idx for idx, w in enumerate(words)}
-    tag2idx = {t: idx for idx, t in enumerate(tags)}
     # --------------------------- ---model part----------- -------------------
-    model = Network(50, 300, word2idx, tag2idx, Cross_Entropy_Loss)
-    model.load_model(cfg.data_path)
-    acc = model.evelution(test)
-    # epochs, batch_size, regulation, learning rate
-    # model.SGD(train, 20, 32, 0, 1, cfg.data_path,best_acc=acc, test_data=test)
+    # model = Network(50, 300, word2idx, tag2idx, Cross_Entropy_Loss)
