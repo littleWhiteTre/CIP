@@ -14,8 +14,8 @@ HIDDEN = 100
 EMBED = 100
 BATCH_SIZE = 32
 TEXT_LENS = 50
-LR = 1e-3
-MODEL_NAME = 'bilstm_crf.model'
+LR = 1e-4
+MODEL_NAME = 'data/bilstm_crf.model'
 '''
 return data:
 [((NR, NR, NN, ...), ('戴相龙', '说', '中国'))]
@@ -129,7 +129,7 @@ class BiLSTM_CRF(nn.Module):
                             bidirectional=True)
         self.fc = nn.Linear(hidden_size, self.tags_size - 2)
         self.transition = nn.Parameter(
-            torch.zeros(self.tags_size,
+            torch.randn(self.tags_size,
                         self.tags_size))  #[-1]:<eos> [-2]:<bos>
         self.transition.data[self.tags2idx['<eos>'], :] = -10000
         self.transition.data[:, self.tags2idx['<bos>']] = -10000
@@ -178,14 +178,10 @@ class BiLSTM_CRF(nn.Module):
             if i == emission.size()[0] - 1:
                 score = score + torch.unsqueeze(
                     self.transition[:-2, self.tags2idx['<eos>']], dim=0)
-            vmax = torch.max(score, dim=1,
-                             keepdim=True).values  #[tags_size-2, 1]
-            pre = torch.log(
-                torch.sum(torch.exp(score - vmax), dim=1, keepdim=True)) + vmax
-        vmax = torch.max(pre, dim=0, keepdim=True).values
-        total_s = torch.log(torch.sum(torch.exp(pre - vmax), dim=0)) + vmax
-        return total_s.squeeze(0)
-
+            pre = torch.logsumexp(score, dim=0, keepdim=True).T
+        total_s = torch.logsumexp(pre, dim=0)
+        return total_s
+        
     def _batch_forward_alg(self, batch_emission, n):
         '''
         input   batch_emission : [batch, text_lens, tags_size-2]
@@ -205,12 +201,14 @@ class BiLSTM_CRF(nn.Module):
         '''
         alpha0 = []
         alpha1 = []  # lens of alpha1 should be 'n-1'.
-        pre = emission[0]
+        pre = emission[0] + self.transition[self.tags2idx['<bos>'], :-2] # [tags_size-2]
         alpha0.append(pre)
-        pre = torch.unsqueeze(pre, dim=1)
+        pre = torch.unsqueeze(pre, dim=1) # [tags_size-2, 1]
         for i in range(1, emission.size()[0]):
             obs = torch.unsqueeze(emission[i], dim=0)
             score = pre + obs + self.transition[:-2, :-2]
+            if i == emission.size()[0]-1:
+                score = score + torch.unsqueeze(self.transition[:-2, self.tags2idx['<eos>']], dim=0)
             max_v, max_idx = torch.max(score, dim=0)
             alpha0.append(max_v)
             alpha1.append(max_idx)
@@ -249,7 +247,7 @@ class BiLSTM_CRF(nn.Module):
                                                        enforce_sorted=False)
         lstm_o, (h, c) = self.lstm(packed_inp, None)
         lstm_o, _ = nn.utils.rnn.pad_packed_sequence(lstm_o, batch_first=True)
-        # lstm_o = self.dropout(lstm_o)
+        lstm_o = self.dropout(lstm_o)
         # lstm_o: [batch, seq_lens, hidden_size]
         # return F.softmax(self.fc(lstm_o), dim=2)  # [batch, seq_lens, tags_size-2]
         return self.fc(lstm_o)
@@ -280,14 +278,14 @@ class BiLSTM_CRF(nn.Module):
         # return loss
         forward_score = self._batch_forward_alg(feats, n)
         real_score = self._batch_score_sentence(feats, batch_tags, n)
-        print('1', forward_score)
-        print('2', real_score)
+        # print('1', forward_score)
+        # print('2', real_score)
         return torch.sum(forward_score - real_score)
 
 
 def train(model, dl, epochs=5, lr=LR, test_dl=None, best_score=0):
     model.train()
-    optim = torch.optim.Adam(model.parameters(), lr=lr)
+    optim = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
     best_score = best_score
     for epoch in range(1, epochs + 1):
         running_loss = 0
@@ -363,5 +361,3 @@ if __name__ == "__main__":
         train(model, dl, epochs=EPOCHS, test_dl=test_dl, best_score=acc)
     else:
         train(model, dl, epochs=EPOCHS, test_dl=test_dl)
-    # train(model, dl, epochs=EPOCHS)
-    # evalution(model, test_dl)
